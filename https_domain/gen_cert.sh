@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
-DOMAIN=${DOMAIN:-ali.taojunting.com}
+DOMAIN=${DOMAIN:-taojunting.com}
 EMAIL=${EMAIL:-ws00310976@gmail.com}
 WEBROOT=${WEBROOT:-./html}
 CERT_DIR=${CERT_DIR:-./certs}
@@ -47,11 +47,8 @@ ensure_acme() {
     echo "Installing acme.sh for $EMAIL"
     curl https://get.acme.sh | sh -s email="$EMAIL"
   fi
-  if [ "$STAGING" = "1" ]; then
-    "$ACME" --set-default-ca --server letsencrypt
-  else
-    "$ACME" --set-default-ca --server letsencrypt
-  fi
+  "$ACME" --set-default-ca --server letsencrypt
+  "$ACME" --install-cronjob >/dev/null 2>&1 || true
 }
 
 ensure_webroot() {

@@ -14,139 +14,54 @@
 - certs/：证书输出目录（脚本会创建）。
 - conf.d/：nginx 站点配置，需引用挂载的证书文件。
 
-## 默认配置（来自 gen_cert.sh）
-- DOMAIN: ali.taojunting.com
-- EMAIL: ws00310976@gmail.com
-- WEBROOT: ./html
-- CERT_DIR: ./certs
-- COMPOSE_FILE: ./docker-compose.yml（脚本内按绝对路径传递）
-- ACME: ~/.acme.sh/acme.sh
-- STAGING: 0（关闭 Let’s Encrypt 测试环境）
-
-## 快速使用（HTTP-01）
+## 获取证书与自动续期快速步骤
+1) 确认域名 taojunting.com 已解析到此服务器，80/443 放行。
+2) 启动 nginx（若未运行）：
 ```bash
-chmod +x ./gen_cert.sh
-./gen_cert.sh help
-# 签发（生产）：
-DOMAIN=ali.taojunting.com EMAIL=ws00310976@gmail.com ./gen_cert.sh issue
-# 签发（LE 测试环境，不计配额）：
-DOMAIN=ali.taojunting.com EMAIL=ws00310976@gmail.com STAGING=1 ./gen_cert.sh issue
-# 续期（按当前配置）：
-DOMAIN=ali.taojunting.com ./gen_cert.sh renew
-# 强制续期：
-DOMAIN=ali.taojunting.com ./gen_cert.sh force-renew
+cd /data/ops_example/https_domain
+docker compose up -d nginx
 ```
-
-可用环境变量（均有默认值）：
-- DOMAIN：目标域名（默认 ali.taojunting.com）。
-- EMAIL：申请邮箱（默认 ws00310976@gmail.com）。
-- WEBROOT：HTTP-01 验证目录，需与 nginx 站点根一致（默认 ./html）。
-- CERT_DIR：证书保存目录（默认 ./certs，与 compose 挂载对齐）。
-- COMPOSE_FILE：docker compose 文件路径（默认 ./docker-compose.yml）。
-- ACME：acme.sh 可执行路径（默认 $HOME/.acme.sh/acme.sh）。
-
-脚本流程简述：
-1) 如未安装 acme.sh，则下载安装并开启 auto-upgrade，并设置默认 CA 为 Let’s Encrypt：`acme.sh --set-default-ca --server letsencrypt`。
-2) 使用 HTTP-01 在指定 WEBROOT 下签发 DOMAIN 证书（支持 STAGING=1 使用 LE 测试环境）。
-3) 将 key/fullchain 安装到 CERT_DIR，并调用 `docker compose -f ./docker-compose.yml exec nginx nginx -s reload` 热加载证书。
-
-## 脚本命令与参数
-- 动作：`issue`、`renew`、`force-renew`、`install`、`reload`、`help`
-- 环境变量：`DOMAIN`、`EMAIL`、`WEBROOT`、`CERT_DIR`、`COMPOSE_FILE`、`ACME`、`STAGING`
-- ACME 校验：使用 HTTP-01，webroot 必须与 nginx 的站点根一致（本例为 `./html` 挂载到 `/usr/share/nginx/html`）。
-
-## nginx 配置示例（conf.d 内）
-```nginx
-server {
-		listen 80;
-		server_name ali.taojunting.com;
-
-    location /.well-known/acme-challenge/ {
-        root /usr/share/nginx/html;
-    }
-
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name ali.taojunting.com;
-
-		root /usr/share/nginx/html;
-		ssl_certificate     /etc/nginx/certs/ali.taojunting.com.fullchain.cer;
-		ssl_certificate_key /etc/nginx/certs/ali.taojunting.com.key;
-
-		location /.well-known/acme-challenge/ {
-				root /usr/share/nginx/html;
-		}
-}
-```
-
-## 续期说明
-acme.sh 默认通过 cron 定时执行续期逻辑，本项目在安装证书时已配置 nginx 热加载：
-- 自动续期机制：安装 acme.sh 时会在当前用户的 crontab 写入每日多次的执行条目。
-- 自动重载：脚本安装证书时设置了 `--reloadcmd`，续期完成后将执行 `docker compose -f ./docker-compose.yml exec nginx nginx -s reload`。
-
-### 续期原理
-- 首次签发与部署：执行 `issue` 后，脚本会调用 `acme.sh --install-cert`，acme.sh 会在其域名配置中记录“部署目标”（`CERT_DIR` 中的 key/fullchain 目标路径）与 `--reloadcmd`。
-- 定时检查：系统的 cron（或用户 crontab）周期性运行 `acme.sh --cron`。当证书接近到期（LE 证书有效期 90 天，acme.sh 默认在签发约 60 天后续期）时，触发自动续期。
-- 续期动作：acme.sh 成功续期后会按已记录的部署目标将新的证书文件复制到 `./certs` 中对应文件（如 `ali.taojunting.com.key` 与 `ali.taojunting.com.fullchain.cer`），随后执行已保存的 `--reloadcmd` 热加载 Nginx。
-- 重要前置：若从未执行过 `--install-cert`（即未通过 `issue`/`install` 指定部署路径），cron 续期只会更新 `~/.acme.sh` 下的证书，不会同步到 `./certs`，也不会触发 Nginx reload。
-- 文件映射：`docker-compose.yml` 将本地 `./certs` 挂载到容器 `/etc/nginx/certs`，因此文件更新后 Nginx reload 即生效。
-
-验证与排障：
-- 查看定时任务：
-  ```bash
-  crontab -l | grep acme.sh || echo "(当前用户尚无 acme.sh 定时任务)"
-  ```
-- 手动仿真续期（不会强制更新，便于检查流程与日志）：
-  ```bash
-  ~/.acme.sh/acme.sh --cron --home ~/.acme.sh
-  ```
-- 手动强制续期（测试或提前续期）：
-  ```bash
-  DOMAIN=ali.taojunting.com ./gen_cert.sh force-renew
-  ```
-- 日志位置：`~/.acme.sh/*.log`；如遇验证失败，先用 HTTP 访问 `/.well-known/acme-challenge/` 路径自检。
-
-注意：若以 root 用户执行脚本，crontab 将写入 root 用户；若以普通用户执行，则写入该用户的 crontab。请确保续期时有权限执行 `docker compose exec nginx`。
-
-### 系统级定时任务（/etc/crontab，可选）
-acme.sh 默认会写入“用户 crontab”。若你希望使用系统级 cron（便于集中管理日志与权限），可以在 `/etc/crontab`（或新建 `/etc/cron.d/acme-sh`）中添加：
-
+3) 签发正式证书：
 ```bash
-# 建议的全局环境
-SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# 每日 03:17 执行续期（以 root 为例），并输出到日志
+cd /data/ops_example/https_domain
+DOMAIN=taojunting.com EMAIL=ws00310976@gmail.com ./gen_cert.sh issue
+```
+4) 验证文件生成：`ls certs` 应包含 `taojunting.com.key` 与 `taojunting.com.fullchain.cer`。
+5) 查看 crontab 是否已安装 acme.sh 续期任务：
+```bash
+crontab -l | grep acme.sh || echo "(未找到 acme.sh 定时任务)"
+```
+如需手动添加系统级计划任务（示例 root 用户，每日 03:17）：
+```
 17 3 * * * root /root/.acme.sh/acme.sh --cron --home /root/.acme.sh >> /var/log/acme.sh-cron.log 2>&1
-```
+# 项目简述
 
-- 非 root 用户请将路径与用户字段替换为实际用户，例如 `/home/ubuntu/.acme.sh` 与 `ubuntu`。
-- 使配置生效：
-  - Debian/Ubuntu:
-    ```bash
-    sudo systemctl reload cron || sudo service cron reload
-    ```
-  - RHEL/CentOS/AlmaLinux:
-    ```bash
-    sudo systemctl reload crond || sudo service crond reload
-    ```
-- 验证：
-  ```bash
-  grep acme.sh /etc/crontab || true
-  sudo systemctl status cron --no-pager 2>/dev/null || sudo systemctl status crond --no-pager
-  ```
+本项目用于部署 Nginx（含 HTTPS 证书挂载）和展示个人相册主页。详细说明已拆分至 docs 目录。
 
-补充：本项目安装证书时已设置 `--reloadcmd`，续期完成后会自动执行 `docker compose -f ./docker-compose.yml exec nginx nginx -s reload`，无需在 cron 中重复写 reload。需要手动热加载时也可执行：
+## 目录结构
+- docker-compose.yml：Nginx 服务定义与卷挂载
+- nginx.conf：Nginx 主配置
+- conf.d/：站点配置（含 taojunting.com vhost）
+- html/：站点根（首页为个人相册）
+- resources/：相册资源目录（图片/视频及清单）
+- .env：Compose 环境变量（可用 RESOURCES_DIR 调整主机侧资源目录）
+- certs/：证书输出目录
+- docs/：详细文档
+  - docs/certificates.md：证书签发、安装与自动续期
+  - docs/website.md：站点结构与个人相册用法
 
+## 快速入口
+- 证书说明：docs/certificates.md
+- 网站说明：docs/website.md
+  - 说明如何通过 `RESOURCES_DIR` 更换资源目录位置，并在容器中以 `/resources` 提供访问。
+
+## 快速启动
 ```bash
-./gen_cert.sh reload
+cd /data/ops_example/https_domain
+docker compose up -d nginx
 ```
-
 ## 故障排查
-- 验证 HTTP-01：浏览器访问 `http://ali.taojunting.com/.well-known/acme-challenge/test` 能命中文件。
+- 验证 HTTP-01：浏览器访问 `http://taojunting.com/.well-known/acme-challenge/test` 能命中文件。
 - 查看 nginx 日志：`./logs` 目录。
 - 查看 acme.sh 日志：`~/.acme.sh/acme.sh --log` 可指定日志位置；缺省日志在 `~/.acme.sh/*.log`。
 

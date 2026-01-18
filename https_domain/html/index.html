@@ -1,11 +1,132 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-cn">
 <head>
   <meta charset="utf-8">
-  <title>nginx is running</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2.0.6/css/pico.min.css">
+  <title>乎乎的相册</title>
+  <style>
+    :root { --bg:#ffffff; --bg2:#fff7f9; --bg3:#f3fbff; --panel:#ffffff; --border:#e8eef5; --text:#1f2a36; --muted:#64758b; --link:#3a7bd5; --accent:#ff9ac0; --accent2:#8ee0ff; }
+    * { box-sizing: border-box; }
+    body { background: linear-gradient(180deg, var(--bg2), var(--bg3)); color: var(--text); -webkit-tap-highlight-color: transparent; }
+    header { padding: 12px 16px; border-bottom: 1px solid var(--border); display:flex; align-items:center; justify-content:space-between; position: sticky; top: 0; background: rgba(255,255,255,0.9); backdrop-filter: saturate(1.2) blur(6px); z-index: 10; }
+    .brand { font-size: 18px; font-weight: 700; letter-spacing: 0.2px; margin: 0; display:flex; align-items:center; gap:8px; }
+    .hero { background: linear-gradient(90deg, var(--accent), var(--accent2)); color: #17324a; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; display:flex; align-items:center; justify-content:space-between; gap: 12px; box-shadow: 0 6px 18px rgba(255, 154, 192, 0.25); }
+    .hero hgroup { margin: 0; }
+    .hero-title { font-weight: 700; font-size: 16px; margin: 0; }
+    .hero-sub { font-size: 13px; color: #17324a; margin: 4px 0 0 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: 0 6px 20px rgba(17, 39, 53, 0.08); transition: transform .15s ease; }
+    .card:hover { transform: translateY(-2px); }
+    .media { width: 100%; aspect-ratio: 16 / 9; background: #eef6ff; position: relative; }
+    .card img, .card video { width: 100%; height: 100%; object-fit: cover; display:block; border-bottom: 1px solid var(--border); }
+    .date-badge { position: absolute; right: 8px; bottom: 8px; background: rgba(255,255,255,0.9); border: 1px solid var(--border); color: #334155; font-size: 12px; padding: 4px 8px; border-radius: 999px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); }
+    .card .meta { padding: 10px 12px; font-size: 13px; color: #32425a; margin: 0; font-weight: 600; }
+    .empty { color: var(--muted); font-size: 14px; }
+    main { padding: 12px; max-width: 1100px; margin: 0 auto; }
+    section h2 { margin-bottom: 8px; color: #1f2a36; display:flex; align-items:center; gap:8px; font-weight: 800; letter-spacing: 0.2px; }
+    .tag-pill { display:inline-flex; align-items:center; gap:6px; padding: 5px 12px; border-radius: 999px; background: #eef4ff; color: #1d3b75; font-size: 12px; border: 1px solid #d8e2ff; }
+    .tag-pill.video { background: #e8fff7; color: #0f5132; border-color: #c8f1e0; }
+    .type-icon { font-size: 16px; }
+    footer { padding: 14px; border-top: 1px solid var(--border); text-align:center; color: var(--muted); }
+    @media (min-width: 480px) { main { padding: 16px; } .grid { gap: 12px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); } }
+    @media (min-width: 768px) { .grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
+  </style>
+  <script>
+    async function loadAlbum() {
+      const titleEl = document.getElementById('title');
+      const imgGrid = document.getElementById('images');
+      const vidGrid = document.getElementById('videos');
+      const imgEmpty = document.getElementById('images-empty');
+      const vidEmpty = document.getElementById('videos-empty');
+
+      const formatDate = (d) => {
+        const pad = (n) => String(n).padStart(2, '0');
+        const y = d.getFullYear();
+        const m = pad(d.getMonth() + 1);
+        const day = pad(d.getDate());
+        return `${y}-${m}-${day}`;
+      };
+
+      const setMetaDate = async (metaEl, src) => {
+        try {
+          const r = await fetch(`/resources/${src}`, { method: 'HEAD', cache: 'no-store' });
+          const lm = r.headers.get('last-modified');
+          if (lm) {
+            const d = new Date(lm);
+            metaEl.textContent = formatDate(d);
+            return;
+          }
+          metaEl.textContent = '未知日期';
+        } catch (e) {
+          metaEl.textContent = '未知日期';
+        }
+      };
+      try {
+        const res = await fetch('/resources/manifest.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error('Manifest not found');
+        const data = await res.json();
+        titleEl.textContent = data.title || '乎乎的相册';
+        const images = Array.isArray(data.images) ? data.images : [];
+        const videos = Array.isArray(data.videos) ? data.videos : [];
+        if (images.length === 0) imgEmpty.style.display = 'block';
+        if (videos.length === 0) vidEmpty.style.display = 'block';
+        for (const item of images) {
+          const src = typeof item === 'string' ? item : item.src;
+          if (!src) continue;
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `<a href="/resources/${src}" target="_blank" rel="noopener"><div class="media"><img loading="lazy" src="/resources/${src}" alt="照片" sizes="(max-width: 480px) 100vw, (max-width: 768px) 50vw, 33vw"><div class="date-badge">日期加载中…</div></div></a><p class="meta">儿童相册</p>`;
+          imgGrid.appendChild(card);
+          const badgeEl = card.querySelector('.date-badge');
+          setMetaDate(badgeEl, src);
+        }
+        for (const item of videos) {
+          const src = typeof item === 'string' ? item : item.src;
+          if (!src) continue;
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `<div class="media"><video controls preload="metadata" playsinline webkit-playsinline src="/resources/${src}"></video><div class="date-badge">日期加载中…</div></div><p class="meta"><a href="/resources/${src}" target="_blank" rel="noopener">下载</a></p>`;
+          vidGrid.appendChild(card);
+          const badgeEl = card.querySelector('.date-badge');
+          setMetaDate(badgeEl, src);
+        }
+      } catch (e) {
+        titleEl.textContent = '乎乎的相册';
+        imgEmpty.style.display = 'block';
+        vidEmpty.style.display = 'block';
+      }
+    }
+    window.addEventListener('DOMContentLoaded', loadAlbum);
+  </script>
 </head>
 <body>
-  <h1>nginx is running</h1>
-  <p>Static files served from ./html. ACME HTTP-01 challenges will appear under /.well-known/acme-challenge/.</p>
+  <header>
+    <div class="brand"><span aria-hidden="true">🧸🎈</span><span id="title">乎乎的相册</span></div>
+    <div class="meta"><a href="/resources/" target="_blank" rel="noopener">打开资源目录</a></div>
+  </header>
+  <main>
+    <div class="hero">
+      <hgroup>
+        <p class="hero-title">欢迎来到小朋友的相册</p>
+        <p class="hero-sub">轻点图片或视频即可预览，日期显示在画面右下角</p>
+      </hgroup>
+      <div aria-hidden="true">✨</div>
+    </div>
+    <section class="section">
+      <h2><span class="type-icon" aria-hidden="true">📷</span><span>照片</span><span class="tag-pill">照片</span></h2>
+      <p id="images-empty" class="empty" style="display:none">当前没有图片。请将文件放入 resources，并在 resources/manifest.json 的 images 中添加文件名。</p>
+      <div id="images" class="grid"></div>
+    </section>
+    <section class="section">
+      <h2><span class="type-icon" aria-hidden="true">🎬</span><span>视频</span><span class="tag-pill video">视频</span></h2>
+      <p id="videos-empty" class="empty" style="display:none">当前没有视频。请将文件放入 resources，并在 resources/manifest.json 的 videos 中添加文件名。</p>
+      <div id="videos" class="grid"></div>
+    </section>
+  </main>
+  <footer>
+    <small>ACME HTTP-01 验证文件位于 /.well-known/acme-challenge/。</small>
+  </footer>
 </body>
 </html>
