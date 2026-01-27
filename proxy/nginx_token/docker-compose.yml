@@ -3,7 +3,7 @@ version: "3.9"
 services:
   nginx-llm-proxy:
     # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量（标准 nginx 的 $request_body 在 proxy 场景不生效）
-    image: openresty/openresty:alpine
+    image: openresty/openresty:1.27.1.2-0-alpine
     container_name: nginx-llm-proxy
     restart: unless-stopped
     ports:
