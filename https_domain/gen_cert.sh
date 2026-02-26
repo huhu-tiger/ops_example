@@ -12,6 +12,16 @@ COMPOSE_FILE=${COMPOSE_FILE:-"$BASE_DIR/docker-compose.yml"}
 ACME=${ACME:-"$HOME/.acme.sh/acme.sh"}
 STAGING=${STAGING:-0}
 
+# Detect docker compose command
+if docker compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  DOCKER_COMPOSE="docker-compose"
+else
+  echo "Error: Neither 'docker compose' nor 'docker-compose' found" >&2
+  exit 1
+fi
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [issue|renew|force-renew|install|reload|help]
@@ -65,13 +75,13 @@ ensure_webroot() {
 }
 
 ensure_nginx() {
-  if ! docker compose -f "$COMPOSE_FILE" ps nginx >/dev/null 2>&1; then
+  if ! $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps nginx >/dev/null 2>&1; then
     echo "docker compose not ready; file: $COMPOSE_FILE" >&2
     return 1
   fi
   # Start nginx if not running
-  if ! docker compose -f "$COMPOSE_FILE" ps --status running | grep -q "nginx"; then
-    docker compose -f "$COMPOSE_FILE" up -d nginx
+  if ! $DOCKER_COMPOSE -f "$COMPOSE_FILE" ps | grep -q "nginx.*Up"; then
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" up -d nginx
   fi
 }
 
@@ -81,7 +91,7 @@ install_cert() {
   "$ACME" --install-cert -d "$d" \
     --key-file "$CERT_DIR/$d.key" \
     --fullchain-file "$CERT_DIR/$d.fullchain.cer" \
-    --reloadcmd "docker compose -f $COMPOSE_FILE exec nginx nginx -s reload"
+    --reloadcmd "$DOCKER_COMPOSE -f $COMPOSE_FILE exec nginx nginx -s reload"
   echo "Installed cert to $CERT_DIR for $d"
 }
 
@@ -132,7 +142,7 @@ case "$action" in
     done
     ;;
   reload)
-    docker compose -f "$COMPOSE_FILE" exec nginx nginx -s reload
+    $DOCKER_COMPOSE -f "$COMPOSE_FILE" exec nginx nginx -s reload
     ;;
 esac
 
