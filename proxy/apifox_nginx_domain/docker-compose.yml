@@ -3,12 +3,13 @@ version: "3.9"
 services:
   nginx-apifox-proxy:
     # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量（标准 nginx 的 $request_body 在 proxy 场景不生效）
-    image: openresty/openresty:1.27.1.2-0-alpine
+    # image: openresty/openresty:1.27.1.2-0-alpine
+    image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
     container_name: nginx-apifox-proxy
     restart: unless-stopped
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "80:80"
+      - "443:443"
     user: "0:0"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
