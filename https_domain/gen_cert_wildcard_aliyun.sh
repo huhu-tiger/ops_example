@@ -27,6 +27,7 @@ set -euo pipefail
 #   STAGING=1                     # 走 Let's Encrypt 测试环境
 #   DNSSLEEP=120                  # 签发时等待 DNS 生效秒数（0=关闭）
 #   CHECK_NS=0                    # 跳过阿里云 NS 预检（不推荐）
+#   DIG_SERVER=223.5.5.5          # NS 预检用的公网 DNS（避开内网分裂视图）
 #
 # 示例:
 #   STAGING=1 ./gen_cert_wildcard_aliyun.sh issue
@@ -47,6 +48,7 @@ readonly DEFAULT_STAGING="0"
 readonly DEFAULT_DNS_PROVIDER="dns_ali"
 readonly DEFAULT_DNSSLEEP="120"   # 仅 issue/force-renew；0=关闭
 readonly DEFAULT_CHECK_NS="1"     # 签发前检查阿里云 NS；0=跳过
+readonly DEFAULT_DIG_SERVER="223.5.5.5"  # NS 预检；空=本机默认递归（不推荐）
 readonly DEFAULT_ACTION="issue"
 readonly KEY_MODE="600"
 readonly CERT_MODE="644"
@@ -67,6 +69,7 @@ STAGING=${STAGING:-$DEFAULT_STAGING}
 DNS_PROVIDER=${DNS_PROVIDER:-$DEFAULT_DNS_PROVIDER}
 DNSSLEEP=${DNSSLEEP:-$DEFAULT_DNSSLEEP}
 CHECK_NS=${CHECK_NS:-$DEFAULT_CHECK_NS}
+DIG_SERVER=${DIG_SERVER:-$DEFAULT_DIG_SERVER}
 
 KEY_FILE="$CERT_DIR/$BASE_DOMAIN.key"
 FULLCHAIN_FILE="$CERT_DIR/$BASE_DOMAIN.fullchain.cer"
@@ -90,6 +93,7 @@ Env vars:
   DNS_PROVIDER  acme.sh DNS 插件 (default: ${DEFAULT_DNS_PROVIDER})
   DNSSLEEP      仅 issue/force-renew 时固定等待秒数 (default: ${DEFAULT_DNSSLEEP}；0=关闭)
   CHECK_NS      签发前检查权威 NS 是否阿里云 (default: ${DEFAULT_CHECK_NS}；0=跳过)
+  DIG_SERVER    NS 预检查询的 DNS (default: ${DEFAULT_DIG_SERVER}；空=本机递归)
   Ali_Key       阿里云 AccessKey ID（必填，签发/续期时）
   Ali_Secret    阿里云 AccessKey Secret（必填，签发/续期时）
 
@@ -130,6 +134,16 @@ ensure_ali_creds() {
   fi
 }
 
+# 用公网 DIG_SERVER 查 NS，避免内网分裂视图（本机递归可能返回私有 NS）
+dig_ns() {
+  local name="$1"
+  if [ -n "${DIG_SERVER:-}" ]; then
+    dig @"$DIG_SERVER" +short +time=3 +tries=2 NS "$name" 2>/dev/null || true
+  else
+    dig +short +time=3 +tries=2 NS "$name" 2>/dev/null || true
+  fi
+}
+
 check_aliyun_ns() {
   if [ "$CHECK_NS" != "1" ]; then
     return 0
@@ -139,10 +153,13 @@ check_aliyun_ns() {
     return 0
   fi
 
+  local dig_via="${DIG_SERVER:-本机递归}"
+  echo "NS check via DNS: $dig_via"
+
   local cand ns found=0
   while read -r cand; do
     [ -z "$cand" ] && continue
-    ns=$(dig +short NS "$cand" 2>/dev/null | tr '\n' ' ' || true)
+    ns=$(dig_ns "$cand" | tr '\n' ' ')
     if echo "$ns" | grep -Eiq "$ALIYUN_NS_PATTERN"; then
       echo "NS check OK: $cand -> $ns"
       found=1
@@ -154,8 +171,8 @@ check_aliyun_ns() {
   done < <(root_domain_candidates "$BASE_DOMAIN")
 
   if [ "$found" != "1" ]; then
-    echo "Error: 未检测到阿里云权威 NS。dns_ali 只能改阿里云解析；若 NS 在 Cloudflare 等，请换域名或改用对应 DNS 插件。" >&2
-    echo "  可设 CHECK_NS=0 跳过预检（不推荐）。" >&2
+    echo "Error: 未检测到阿里云权威 NS（查询 DNS: $dig_via）。dns_ali 只能改阿里云解析；若 NS 在 Cloudflare 等，请换域名或改用对应 DNS 插件。" >&2
+    echo "  可设 CHECK_NS=0 跳过预检，或 DIG_SERVER=8.8.8.8 换公网 DNS（不推荐跳过）。" >&2
     exit 1
   fi
 }
@@ -237,7 +254,7 @@ case "$action" in
     ;;
 esac
 
-echo "Using BASE_DOMAIN=$BASE_DOMAIN, WILDCARD=$WILDCARD, EMAIL=$EMAIL, CERT_DIR=$CERT_DIR, STAGING=$STAGING, DNS=$DNS_PROVIDER, DNSSLEEP=$DNSSLEEP, CHECK_NS=$CHECK_NS"
+echo "Using BASE_DOMAIN=$BASE_DOMAIN, WILDCARD=$WILDCARD, EMAIL=$EMAIL, CERT_DIR=$CERT_DIR, STAGING=$STAGING, DNS=$DNS_PROVIDER, DNSSLEEP=$DNSSLEEP, CHECK_NS=$CHECK_NS, DIG_SERVER=${DIG_SERVER:-本机递归}"
 
 case "$action" in
   issue)        do_issue ;;
